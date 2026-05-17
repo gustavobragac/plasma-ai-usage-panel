@@ -4,6 +4,16 @@ KDE Plasma 6 widget that shows **Claude**, **Codex (ChatGPT)**, **GitHub Copilot
 
 Unlike other Plasma AI widgets that only render inside the popup, this one keeps a compact chip per provider on the system tray — same idea as the [waybar-ai-usage](https://github.com/NihilDigit/waybar-ai-usage) module on Hyprland, ported to KDE.
 
+![Chips on the panel](screenshots/panel.png)
+
+Click any chip to expand the detail popup:
+
+![Popup with Window / Used / Reset table](screenshots/popup.png)
+
+Per-provider setup lives inside the widget config:
+
+![Plasma AI Usage settings](screenshots/config.png)
+
 ## Features
 
 - One compact chip per provider on the panel (icon + % + reset time)
