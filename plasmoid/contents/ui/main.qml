@@ -9,12 +9,18 @@ import org.kde.kirigami as Kirigami
 PlasmoidItem {
     id: root
 
+    // Wrap in sh -c with an expanded PATH so the commands resolve even when
+    // plasmashell was started by systemd with a minimal PATH (no ~/.local/bin).
+    function wrap(cmd) {
+        return "sh -c 'export PATH=\"$HOME/.local/bin:$HOME/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin\"; " + cmd + "'";
+    }
+
     readonly property var allProviders: [
-        { id: "claude",   label: "Claude",   command: "claude-usage --waybar",   color: "#DE7356" },
-        { id: "codex",    label: "Codex",    command: "codex-usage --waybar",    color: "#74AA9C" },
-        { id: "copilot",  label: "Copilot",  command: "copilot-usage --waybar",  color: "#8b5cf6" },
-        { id: "zen",      label: "OpenCode Zen", command: "zen-balance --waybar", color: "#DE7356" },
-        { id: "zai",      label: "Z.ai",     command: "zai-usage --waybar",      color: "#126EF4" }
+        { id: "claude",   label: "Claude",   command: wrap("claude-usage --waybar"),   color: "#DE7356" },
+        { id: "codex",    label: "Codex",    command: wrap("codex-usage --waybar"),    color: "#74AA9C" },
+        { id: "copilot",  label: "Copilot",  command: wrap("copilot-usage --waybar"),  color: "#8b5cf6" },
+        { id: "zen",      label: "OpenCode Zen", command: wrap("zen-balance --waybar"), color: "#DE7356" },
+        { id: "zai",      label: "Z.ai",     command: wrap("zai-usage --waybar"),      color: "#126EF4" }
     ]
 
     readonly property var providers: {
