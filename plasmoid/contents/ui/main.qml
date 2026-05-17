@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import org.kde.plasma.plasmoid
+import org.kde.plasma.core as PlasmaCore
 import org.kde.plasma.components as PlasmaComponents
 import org.kde.plasma.extras as PlasmaExtras
 import org.kde.plasma.plasma5support as P5Support
@@ -37,6 +38,17 @@ PlasmoidItem {
 
     preferredRepresentation: compactRepresentation
 
+    property double lastRefreshMs: 0
+    readonly property int refreshCooldownMs: 10000
+
+    onExpandedChanged: {
+        if (!expanded) return;
+        if (!Plasmoid.configuration.refreshOnOpen) return;
+        var now = Date.now();
+        if (now - lastRefreshMs < refreshCooldownMs) return;
+        refreshAll();
+    }
+
     P5Support.DataSource {
         id: executable
         engine: "executable"
@@ -67,7 +79,24 @@ PlasmoidItem {
         onTriggered: refreshAll()
     }
 
+    // Cross-component refresh trigger: config page increments refreshTrigger to force a refresh.
+    Connections {
+        target: Plasmoid.configuration
+        function onRefreshTriggerChanged() { root.refreshAll() }
+    }
+
+    // Right-click context menu entry + shortcut. Plasma exposes this in
+    // System Settings → Shortcuts → Plasma so it can be promoted to global.
+    Plasmoid.contextualActions: [
+        PlasmaCore.Action {
+            text: i18n("Refresh AI Usage")
+            icon.name: "view-refresh"
+            onTriggered: root.refreshAll()
+        }
+    ]
+
     function refreshAll() {
+        lastRefreshMs = Date.now();
         for (var i = 0; i < providers.length; i++) {
             refreshProvider(providers[i]);
         }
@@ -129,7 +158,12 @@ PlasmoidItem {
                                 if (!d) return [modelData.label, "…"];
                                 if (d.error) return [modelData.label, "✗"];
                                 var clean = root.stripPango(d.text || modelData.label).trim();
-                                return clean.split(/\s+/).filter(function(t){ return t.length > 0; });
+                                var tokens = clean.split(/\s+/).filter(function(t){ return t.length > 0; });
+                                // Hide reset clock-icon + value (tokens 2 and 3) when showResetTime is off
+                                if (!Plasmoid.configuration.showResetTime && tokens.length >= 4) {
+                                    tokens = tokens.slice(0, 2);
+                                }
+                                return tokens;
                             }
                             delegate: PlasmaComponents.Label {
                                 required property var modelData
@@ -238,16 +272,10 @@ PlasmoidItem {
             Item { Layout.fillHeight: true }
 
             PlasmaComponents.Button {
-                text: "Refresh"
+                text: i18n("Refresh all")
+                icon.name: "view-refresh"
                 Layout.alignment: Qt.AlignRight
-                onClicked: {
-                    for (var i = 0; i < root.providers.length; i++) {
-                        if (root.providers[i].id === root.popupProvider) {
-                            root.refreshProvider(root.providers[i]);
-                            return;
-                        }
-                    }
-                }
+                onClicked: root.refreshAll()
             }
         }
     }

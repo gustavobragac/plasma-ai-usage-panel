@@ -1,6 +1,6 @@
 [project]
 name = "plasma-ai-usage-panel"
-version = "0.1.0"
+version = "0.2.0"
 description = "Monitor Claude, ChatGPT, GitHub Copilot, OpenCode Zen, and Z.ai usage in KDE Plasma"
 readme = "README.md"
 requires-python = ">=3.11"

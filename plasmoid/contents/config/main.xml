@@ -11,5 +11,14 @@
         <entry name="refreshIntervalSeconds" type="Int">
             <default>120</default>
         </entry>
+        <entry name="showResetTime" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="refreshOnOpen" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="refreshTrigger" type="Int">
+            <default>0</default>
+        </entry>
     </group>
 </kcfg>

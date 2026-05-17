@@ -9,9 +9,13 @@ Kirigami.FormLayout {
 
     property string cfg_enabledProviders
     property int cfg_refreshIntervalSeconds
+    property bool cfg_showResetTime
+    property bool cfg_refreshOnOpen
+    property int cfg_refreshTrigger
 
     property string zaiToken: ""
     property string zaiStatus: ""
+    property string refreshStatus: ""
 
     readonly property var allProviders: [
         {
@@ -85,6 +89,12 @@ Kirigami.FormLayout {
         id: statusFadeTimer
         interval: 3000
         onTriggered: page.zaiStatus = ""
+    }
+
+    Timer {
+        id: refreshStatusTimer
+        interval: 2000
+        onTriggered: page.refreshStatus = ""
     }
 
     function isEnabled(id) {
@@ -162,4 +172,47 @@ Kirigami.FormLayout {
         value: cfg_refreshIntervalSeconds
         onValueChanged: cfg_refreshIntervalSeconds = value
     }
+
+    CheckBox {
+        Kirigami.FormData.label: i18n("Panel display:")
+        text: i18n("Show reset time")
+        checked: cfg_showResetTime
+        onToggled: cfg_showResetTime = checked
+    }
+
+    CheckBox {
+        Kirigami.FormData.label: i18n("On popup open:")
+        text: i18n("Refresh all providers (rate-limited to once every 10s)")
+        checked: cfg_refreshOnOpen
+        onToggled: cfg_refreshOnOpen = checked
+    }
+
+    RowLayout {
+        Kirigami.FormData.label: i18n("Refresh now:")
+
+        Button {
+            text: i18n("Refresh all providers")
+            icon.name: "view-refresh"
+            onClicked: {
+                cfg_refreshTrigger = cfg_refreshTrigger + 1;
+                page.refreshStatus = "Triggered ✓";
+                refreshStatusTimer.restart();
+            }
+        }
+
+        Label {
+            text: page.refreshStatus
+            color: Kirigami.Theme.positiveTextColor
+            visible: page.refreshStatus.length > 0
+        }
+    }
+
+    Label {
+        text: i18n("Tip: bind a key under \"Keyboard Shortcuts\" → \"Activate widget as if clicked\" to open the popup from anywhere.")
+        wrapMode: Text.WordWrap
+        Layout.preferredWidth: 460
+        color: Kirigami.Theme.disabledTextColor
+        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+    }
+
 }

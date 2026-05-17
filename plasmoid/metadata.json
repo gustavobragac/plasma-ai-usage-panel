@@ -13,8 +13,9 @@
         "Id": "com.github.gustavobragac.plasmaaiusage",
         "License": "MIT",
         "Name": "Plasma AI Usage",
-        "Version": "0.1.0",
-        "Website": "https://github.com/gustavobragac/plasma-ai-usage-panel"
+        "Version": "0.2.0",
+        "Website": "https://github.com/gustavobragac/plasma-ai-usage-panel",
+        "BugReportUrl": "https://github.com/gustavobragac/plasma-ai-usage-panel/issues"
     },
     "X-Plasma-API-Minimum-Version": "6.0"
 }
