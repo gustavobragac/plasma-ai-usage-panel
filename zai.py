@@ -12,7 +12,7 @@ from common import format_eta, format_output, get_cached_or_fetch
 
 # ==================== Configuration ====================
 
-CONFIG_PATH = Path("~/.config/waybar-ai-usage/zai.conf").expanduser()
+CONFIG_PATH = Path("~/.config/plasma-ai-usage-panel/zai.conf").expanduser()
 ZAI_ICON = "Z"
 ZAI_COLOR = "#126EF4"
 API_BASE = "https://api.z.ai"
@@ -49,7 +49,7 @@ def _api_get(url: str, token: str) -> dict:
         headers={
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
-            "User-Agent": "waybar-ai-usage/zai",
+            "User-Agent": "plasma-ai-usage-panel/zai",
         },
     )
     try:
@@ -138,7 +138,7 @@ def print_cli(quota: dict) -> None:
             print(f"  - {code}: {usage}")
 
 
-def print_waybar(
+def print_json(
     quota: dict,
     format_str: str | None = None,
     tooltip_format: str | None = None,
@@ -235,7 +235,7 @@ def main() -> None:
         description="Show Z.ai usage in Waybar",
     )
     parser.add_argument(
-        "--waybar",
+        "--json",
         action="store_true",
         help="Output in JSON format for Waybar custom module",
     )
@@ -243,7 +243,7 @@ def main() -> None:
         "--format",
         type=str,
         help=(
-            "Custom format string for waybar text. Available: {icon}, {icon_plain}, "
+            "Custom format string for output text. Available: {icon}, {icon_plain}, "
             "{pct}, {reset}, {status}, {tools_pct}, {tools_remaining}, {tools_reset}. "
             "Example: '{icon_plain} {pct}%%'"
         ),
@@ -265,7 +265,7 @@ def main() -> None:
     token = config["ZAI_TOKEN"]
 
     if not token:
-        if args.waybar:
+        if args.json:
             print(json.dumps({
                 "text": f"<span foreground='#ff5555'>{ZAI_ICON} No Token</span>",
                 "tooltip": (
@@ -284,7 +284,7 @@ def main() -> None:
                 file=sys.stderr,
             )
             print(
-                f"    Create config: mkdir -p ~/.config/waybar-ai-usage",
+                f"    Create config: mkdir -p ~/.config/plasma-ai-usage-panel",
                 file=sys.stderr,
             )
             print(
@@ -296,7 +296,7 @@ def main() -> None:
     try:
         quota = get_zai_quota(token)
     except Exception as e:
-        if args.waybar:
+        if args.json:
             err_msg = str(e)
             is_auth = "401" in err_msg or "403" in err_msg
             short_err = "Auth Err" if is_auth else "Net Err"
@@ -311,8 +311,8 @@ def main() -> None:
             print(f"[!] Critical Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-    if args.waybar:
-        print_waybar(quota, args.format, args.tooltip_format)
+    if args.json:
+        print_json(quota, args.format, args.tooltip_format)
     else:
         print_cli(quota)
 

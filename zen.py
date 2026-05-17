@@ -133,7 +133,7 @@ def print_cli(balance_data: dict) -> None:
     print(f"Zen Balance: ${balance_data['balance']:.2f} {balance_data['currency']}")
 
 
-def print_waybar(balance_data: dict) -> None:
+def print_json(balance_data: dict) -> None:
     """Print balance in JSON format for Waybar"""
     balance = balance_data.get("balance", 0.0)
 
@@ -175,7 +175,7 @@ def main() -> None:
         description="Fetch OpenCode Zen balance for Waybar or CLI"
     )
     parser.add_argument(
-        "--waybar",
+        "--json",
         action="store_true",
         help="Output in JSON format for Waybar custom module",
     )
@@ -189,7 +189,7 @@ def main() -> None:
     try:
         balance_data = get_zen_balance(args.browser)
     except Exception as e:
-        if args.waybar:
+        if args.json:
             err_msg = str(e)
             err_lower = err_msg.lower()
             is_http_auth = "403" in err_msg or "401" in err_msg
@@ -221,8 +221,8 @@ def main() -> None:
             print(f"[!] Critical Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-    if args.waybar:
-        print_waybar(balance_data)
+    if args.json:
+        print_json(balance_data)
     else:
         print_cli(balance_data)
 

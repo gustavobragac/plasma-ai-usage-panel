@@ -94,7 +94,7 @@ def get_codex_usage(browsers: list[str] | None = None) -> dict:
 # ================= Output Logic =================
 
 
-def print_waybar(
+def print_json(
     usage: dict,
     format_str: str | None = None,
     tooltip_format: str | None = None,
@@ -230,7 +230,7 @@ def print_cli(usage: dict) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--waybar", action="store_true")
+    parser.add_argument("--json", action="store_true")
     parser.add_argument(
         "--browser",
         action="append",
@@ -240,7 +240,7 @@ def main() -> None:
         "--format",
         type=str,
         help=(
-            "Custom format string for waybar text. Available: {icon}, {icon_plain}, "
+            "Custom format string for output text. Available: {icon}, {icon_plain}, "
             "{time_icon}, {time_icon_plain}, {5h_pct}, {7d_pct}, {5h_reset}, {7d_reset}, "
             "{status}, {pct}, {reset}, {win}. Example: '{icon_plain} {5h_pct}%%'"
         ),
@@ -260,7 +260,7 @@ def main() -> None:
     try:
         usage = get_codex_usage(args.browser)
     except Exception as e:
-        if args.waybar:
+        if args.json:
             err_msg = str(e)
             err_lower = err_msg.lower()
             is_http_auth = "403" in err_msg or "401" in err_msg
@@ -280,8 +280,8 @@ def main() -> None:
             print(f"[!] Critical Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-    if args.waybar:
-        print_waybar(usage, args.format, args.tooltip_format, args.show_5h)
+    if args.json:
+        print_json(usage, args.format, args.tooltip_format, args.show_5h)
     else:
         print_cli(usage)
 

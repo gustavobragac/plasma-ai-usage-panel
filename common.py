@@ -24,7 +24,7 @@ LOGIN_URLS = {
 
 
 # Cache configuration
-CACHE_DIR = Path.home() / ".cache" / "waybar-ai-usage"
+CACHE_DIR = Path.home() / ".cache" / "plasma-ai-usage-panel"
 LOGIN_OPEN_COOLDOWN = 600  # Don't re-open the same login page within 10 minutes
 
 

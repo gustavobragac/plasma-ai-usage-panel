@@ -28,7 +28,7 @@ Per-provider setup lives inside the widget config:
 |---|---|
 | Claude | Browser cookie (claude.ai) |
 | Codex (ChatGPT) | Browser cookie (chatgpt.com) |
-| Copilot | Browser cookie (github.com) — also accepts a PAT in `~/.config/waybar-ai-usage/copilot.conf` for personal plans |
+| Copilot | Browser cookie (github.com) — also accepts a PAT in `~/.config/plasma-ai-usage-panel/copilot.conf` for personal plans |
 | OpenCode Zen | Browser cookie (opencode.ai) |
 | Z.ai (GLM) | API key from [z.ai/manage-apikey/apikey-list](https://z.ai/manage-apikey/apikey-list) — paste it in the widget config |
 

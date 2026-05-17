@@ -16,11 +16,11 @@ PlasmoidItem {
     }
 
     readonly property var allProviders: [
-        { id: "claude",   label: "Claude",   command: wrap("claude-usage --waybar"),   color: "#DE7356" },
-        { id: "codex",    label: "Codex",    command: wrap("codex-usage --waybar"),    color: "#74AA9C" },
-        { id: "copilot",  label: "Copilot",  command: wrap("copilot-usage --waybar"),  color: "#8b5cf6" },
-        { id: "zen",      label: "OpenCode Zen", command: wrap("zen-balance --waybar"), color: "#DE7356" },
-        { id: "zai",      label: "Z.ai",     command: wrap("zai-usage --waybar"),      color: "#126EF4" }
+        { id: "claude",   label: "Claude",   command: wrap("claude-usage --json"),   color: "#DE7356" },
+        { id: "codex",    label: "Codex",    command: wrap("codex-usage --json"),    color: "#74AA9C" },
+        { id: "copilot",  label: "Copilot",  command: wrap("copilot-usage --json"),  color: "#8b5cf6" },
+        { id: "zen",      label: "OpenCode Zen", command: wrap("zen-balance --json"), color: "#DE7356" },
+        { id: "zai",      label: "Z.ai",     command: wrap("zai-usage --json"),      color: "#126EF4" }
     ]
 
     readonly property var providers: {

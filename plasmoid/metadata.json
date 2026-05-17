@@ -14,7 +14,7 @@
         "License": "MIT",
         "Name": "Plasma AI Usage",
         "Version": "0.1.0",
-        "Website": "https://github.com/gustavobragac/waybar-ai-usage"
+        "Website": "https://github.com/gustavobragac/plasma-ai-usage-panel"
     },
     "X-Plasma-API-Minimum-Version": "6.0"
 }

@@ -22,6 +22,6 @@ echo
 echo "Done. Right-click the panel → Add or Manage Widgets → search for 'Plasma AI Usage'."
 echo
 echo "Make sure the CLI helpers are on PATH:"
-echo "  uv tool install --from . waybar-ai-usage"
+echo "  uv tool install --from . plasma-ai-usage-panel"
 echo "or:"
 echo "  pip install --user ."

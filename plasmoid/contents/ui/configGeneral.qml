@@ -27,7 +27,7 @@ Kirigami.FormLayout {
         {
             id: "copilot",
             label: "GitHub Copilot",
-            requirement: "Works automatically if you're logged into github.com in any browser profile (covers Copilot Business / Enterprise).\n\nFor personal Copilot you can instead provide a fine-grained PAT at ~/.config/waybar-ai-usage/copilot.conf:\nGITHUB_TOKEN=ghp_xxxxxxxx\nCOPILOT_QUOTA=300"
+            requirement: "Works automatically if you're logged into github.com in any browser profile (covers Copilot Business / Enterprise).\n\nFor personal Copilot you can instead provide a fine-grained PAT at ~/.config/plasma-ai-usage-panel/copilot.conf:\nGITHUB_TOKEN=ghp_xxxxxxxx\nCOPILOT_QUOTA=300"
         },
         {
             id: "zen",
@@ -64,7 +64,7 @@ Kirigami.FormLayout {
     Component.onCompleted: loadZaiToken()
 
     function loadZaiToken() {
-        shell.run("cat ~/.config/waybar-ai-usage/zai.conf 2>/dev/null", function(out) {
+        shell.run("cat ~/.config/plasma-ai-usage-panel/zai.conf 2>/dev/null", function(out) {
             var m = out.match(/ZAI_TOKEN\s*=\s*(\S+)/);
             if (m) page.zaiToken = m[1];
         });
@@ -73,8 +73,8 @@ Kirigami.FormLayout {
     function saveZaiToken() {
         var content = "ZAI_TOKEN=" + page.zaiToken + "\n";
         var b64 = Qt.btoa(content);
-        var cmd = "sh -c 'mkdir -p ~/.config/waybar-ai-usage && echo " + b64 +
-                  " | base64 -d > ~/.config/waybar-ai-usage/zai.conf && chmod 600 ~/.config/waybar-ai-usage/zai.conf'";
+        var cmd = "sh -c 'mkdir -p ~/.config/plasma-ai-usage-panel && echo " + b64 +
+                  " | base64 -d > ~/.config/plasma-ai-usage-panel/zai.conf && chmod 600 ~/.config/plasma-ai-usage-panel/zai.conf'";
         shell.run(cmd, function(_out, exitCode) {
             page.zaiStatus = exitCode === 0 ? "Saved ✓" : "Save failed (exit " + exitCode + ")";
             statusFadeTimer.restart();

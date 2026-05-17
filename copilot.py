@@ -16,7 +16,7 @@ from common import format_eta, format_output, get_cached_or_fetch, load_cookies
 
 # ==================== Configuration ====================
 
-CONFIG_PATH = Path("~/.config/waybar-ai-usage/copilot.conf").expanduser()
+CONFIG_PATH = Path("~/.config/plasma-ai-usage-panel/copilot.conf").expanduser()
 COPILOT_ICON = "\uf4b8"   # nf-seti-copilot — same as LazyVim/Neovim Copilot ()
 COPILOT_COLOR = "#8b5cf6"
 DEFAULT_QUOTA = 300
@@ -68,7 +68,7 @@ def _github_get(url: str, token: str) -> dict | list:
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
-            "User-Agent": "waybar-ai-usage/copilot",
+            "User-Agent": "plasma-ai-usage-panel/copilot",
         },
     )
     try:
@@ -272,7 +272,7 @@ def print_cli(used: float, quota: int) -> None:
     print(f"Reset: {reset_str} (next month, 1st at 00:00 UTC)")
 
 
-def print_waybar(
+def print_json(
     used: float,
     quota: int,
     format_str: str | None = None,
@@ -339,7 +339,7 @@ def main() -> None:
         description="Show GitHub Copilot premium request usage in Waybar",
     )
     parser.add_argument(
-        "--waybar",
+        "--json",
         action="store_true",
         help="Output in JSON format for Waybar custom module",
     )
@@ -347,7 +347,7 @@ def main() -> None:
         "--format",
         type=str,
         help=(
-            "Custom format string for waybar text. Available: {icon}, {icon_plain}, "
+            "Custom format string for output text. Available: {icon}, {icon_plain}, "
             "{used}, {quota}, {pct}, {reset}. Example: '{icon_plain} {pct}%%'"
         ),
     )
@@ -375,7 +375,7 @@ def main() -> None:
         if pct is not None:
             used = round(quota * float(pct) / 100, 1)
     except Exception as e:
-        if args.waybar:
+        if args.json:
             err_msg = str(e)
             is_auth = any(
                 marker in err_msg
@@ -425,8 +425,8 @@ def main() -> None:
             print(f"[!] Critical Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-    if args.waybar:
-        print_waybar(used, quota, args.format, args.tooltip_format)
+    if args.json:
+        print_json(used, quota, args.format, args.tooltip_format)
     else:
         print_cli(used, quota)
 

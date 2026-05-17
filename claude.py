@@ -100,7 +100,7 @@ def print_cli(usage: dict) -> None:
     print(f"7-day  : {sd.utilization:.1f}%  (Reset in {_fmt_reset(sd)})")
 
 
-def print_waybar(usage: dict, format_str: str | None = None, tooltip_format: str | None = None, show_5h: bool = False) -> None:
+def print_json(usage: dict, format_str: str | None = None, tooltip_format: str | None = None, show_5h: bool = False) -> None:
     fh = parse_window_percent(usage.get("five_hour"))
     sd = parse_window_percent(usage.get("seven_day"))
 
@@ -240,7 +240,7 @@ def print_waybar(usage: dict, format_str: str | None = None, tooltip_format: str
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--waybar",
+        "--json",
         action="store_true",
         help="Output in JSON format for Waybar custom module",
     )
@@ -253,7 +253,7 @@ def main() -> None:
         "--format",
         type=str,
         help=(
-            "Custom format string for waybar text. Available: {icon}, {icon_plain}, "
+            "Custom format string for output text. Available: {icon}, {icon_plain}, "
             "{time_icon}, {time_icon_plain}, {5h_pct}, {7d_pct}, {5h_reset}, {7d_reset}, "
             "{status}, {pct}, {reset}, {win}. Example: '{icon_plain} {5h_pct}%%'"
         ),
@@ -273,7 +273,7 @@ def main() -> None:
     try:
         usage = get_claude_usage(args.browser)
     except Exception as e:
-        if args.waybar:
+        if args.json:
             err_msg = str(e)
             err_lower = err_msg.lower()
             is_http_auth = "403" in err_msg or "401" in err_msg
@@ -293,8 +293,8 @@ def main() -> None:
             print(f"[!] Critical Error: {e}", file=sys.stderr)
             sys.exit(1)
 
-    if args.waybar:
-        print_waybar(usage, args.format, args.tooltip_format, args.show_5h)
+    if args.json:
+        print_json(usage, args.format, args.tooltip_format, args.show_5h)
     else:
         print_cli(usage)
 
