@@ -1,0 +1,20 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "gustavobragac@gmail.com",
+                "Name": "gustavobragac"
+            }
+        ],
+        "Category": "System Information",
+        "Description": "Monitor Claude, Codex, Copilot, OpenCode Zen, and Z.ai usage from your KDE panel.",
+        "Icon": "applications-development",
+        "Id": "com.github.gustavobragac.plasmaaiusage",
+        "License": "MIT",
+        "Name": "Plasma AI Usage",
+        "Version": "0.1.0",
+        "Website": "https://github.com/gustavobragac/waybar-ai-usage"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
