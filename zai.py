@@ -281,15 +281,15 @@ def main() -> None:
         help="Output in JSON format for Waybar custom module",
     )
     parser.add_argument(
-            "--format",
-            type=str,
-            help=(
-                "Custom format string for output text. Available: {icon}, {icon_plain}, "
-                "{pct}, {reset}, {status}, {tools_pct}, {tools_remaining}, {tools_reset}, "
-                "{5h_pct}, {5h_reset}, {7d_pct}, {7d_reset}. "
-                "Example: '{icon_plain} {7d_pct}%%'"
-            ),
-        )
+        "--format",
+        type=str,
+        help=(
+            "Custom format string for output text. Available: {icon}, {icon_plain}, "
+            "{pct}, {reset}, {status}, {tools_pct}, {tools_remaining}, {tools_reset}, "
+            "{5h_pct}, {5h_reset}, {7d_pct}, {7d_reset}. "
+            "Example: '{icon_plain} {7d_pct}%%'"
+        ),
+    )
     parser.add_argument(
         "--tooltip-format",
         type=str,
