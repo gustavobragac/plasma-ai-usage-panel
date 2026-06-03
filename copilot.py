@@ -142,24 +142,41 @@ def _iter_chromium_profile_cookies(domain: str):
 
 
 def _parse_copilot_features_page(html: str):
-    """Return (pct, managed_by_name, managed_by_href) if the page renders usage, else None."""
-    if 'id="copilot-overages-usage"' not in html:
-        return None
-    section_match = re.search(r'<div id="copilot-overages-usage".*?</li>', html, re.S)
-    if not section_match:
-        return None
-    pct_match = re.search(r'>\s*(\d+(?:\.\d+)?)%\s*<', section_match.group(0))
-    if not pct_match:
-        return None
+    """Return (pct, managed_by_name, managed_by_href) if the page renders usage, else None.
+
+    Supports two layouts of https://github.com/settings/copilot/features:
+    - 2026 usage-based billing: a "Monthly Limit" section with a progress bar,
+      where AI credit usage is shown as a percentage of the monthly limit.
+    - Legacy: the "copilot-overages-usage" premium-request section.
+    """
     managed_by = re.search(
         r'Managed by\s*<a[^>]+href="([^"]+)"[^>]*>([^<]+)</a>',
         html,
     )
-    return (
-        float(pct_match.group(1)),
-        managed_by.group(2) if managed_by else None,
-        managed_by.group(1) if managed_by else None,
-    )
+    managed_name = managed_by.group(2) if managed_by else None
+    managed_href = managed_by.group(1) if managed_by else None
+
+    # New layout (usage-based billing): "Monthly Limit" usage section.
+    idx = html.find("Monthly Limit")
+    if idx != -1:
+        section = html[idx:idx + 3000]
+        # Prefer the precise progress-bar width; fall back to the rounded "N% used" text.
+        width_match = re.search(r'width:\s*([\d.]+)%[^>]*Progress-item', section)
+        used_match = re.search(r'(\d+(?:\.\d+)?)%\s*used', section)
+        if width_match:
+            return (float(width_match.group(1)), managed_name, managed_href)
+        if used_match:
+            return (float(used_match.group(1)), managed_name, managed_href)
+
+    # Legacy layout: premium-request overages section.
+    if 'id="copilot-overages-usage"' in html:
+        section_match = re.search(r'<div id="copilot-overages-usage".*?</li>', html, re.S)
+        if section_match:
+            pct_match = re.search(r'>\s*(\d+(?:\.\d+)?)%\s*<', section_match.group(0))
+            if pct_match:
+                return (float(pct_match.group(1)), managed_name, managed_href)
+
+    return None
 
 
 def _fetch_copilot_usage_from_browser() -> dict:
@@ -262,13 +279,23 @@ def _next_month_reset_iso() -> str:
     return reset.isoformat()
 
 
-def print_cli(used: float, quota: int) -> None:
-    """Print usage to terminal (for debugging)."""
-    pct = round(used / quota * 100) if quota > 0 else 0
+def print_cli(used: float, quota: int, pct: float | None = None) -> None:
+    """Print usage to terminal (for debugging).
+
+    When ``pct`` is given, usage is a percentage of the monthly limit (AI credits,
+    usage-based billing) and the request-count line is omitted. Otherwise the legacy
+    premium-request count is shown.
+    """
     reset_str = format_eta(_next_month_reset_iso())
-    print(f"GitHub Copilot Premium Requests")
-    print("-" * 40)
-    print(f"Used : {used} / {quota} ({pct}%)")
+    if pct is not None:
+        print(f"GitHub Copilot — Monthly Limit")
+        print("-" * 40)
+        print(f"Used : {round(pct, 2):g}% of monthly limit")
+    else:
+        pct = round(used / quota * 100) if quota > 0 else 0
+        print(f"GitHub Copilot Premium Requests")
+        print("-" * 40)
+        print(f"Used : {used} / {quota} ({pct}%)")
     print(f"Reset: {reset_str} (next month, 1st at 00:00 UTC)")
 
 
@@ -277,9 +304,19 @@ def print_json(
     quota: int,
     format_str: str | None = None,
     tooltip_format: str | None = None,
+    pct: float | None = None,
 ) -> None:
-    """Print Waybar JSON output."""
-    pct = min(round(used / quota * 100) if quota > 0 else 0, 100)
+    """Print Waybar JSON output.
+
+    When ``pct`` is given, the value is a percentage of the monthly limit (AI credit
+    usage under usage-based billing) and the request-count is not shown. Otherwise the
+    legacy premium-request count (``used``/``quota``) drives the display.
+    """
+    percent_only = pct is not None
+    if percent_only:
+        pct = min(round(float(pct)), 100)
+    else:
+        pct = min(round(used / quota * 100) if quota > 0 else 0, 100)
     reset_iso = _next_month_reset_iso()
     reset_str = format_eta(reset_iso)
 
@@ -307,6 +344,14 @@ def print_json(
 
     if tooltip_format:
         tooltip = format_output(tooltip_format, data)
+    elif percent_only:
+        tooltip = (
+            f"GitHub Copilot — Monthly Limit\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Used:   {pct}% of monthly limit\n"
+            f"Reset:  {reset_str} (next month)\n"
+            f"\nClick to Refresh"
+        )
     else:
         tooltip = (
             f"GitHub Copilot Premium Requests\n"
@@ -373,6 +418,8 @@ def main() -> None:
         used = usage.get("used", 0)
         pct = usage.get("pct")
         if pct is not None:
+            # Percentage of the monthly limit (AI credits): derive a count only so
+            # that the {used} format placeholder keeps working.
             used = round(quota * float(pct) / 100, 1)
     except Exception as e:
         if args.json:
@@ -426,9 +473,9 @@ def main() -> None:
             sys.exit(1)
 
     if args.json:
-        print_json(used, quota, args.format, args.tooltip_format)
+        print_json(used, quota, args.format, args.tooltip_format, pct=pct)
     else:
-        print_cli(used, quota)
+        print_cli(used, quota, pct=pct)
 
 
 if __name__ == "__main__":
