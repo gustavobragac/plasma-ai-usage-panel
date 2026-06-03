@@ -62,6 +62,21 @@ def _api_get(url: str, token: str) -> dict:
         raise RuntimeError(f"Network error: {e.reason}") from e
 
 
+def _unit_label(item: dict) -> str:
+    typ = item.get("type")
+    unit = item.get("unit")
+    num = item.get("number")
+    if typ == "TOKENS_LIMIT":
+        if unit == 3 and num == 5:
+            return "5h"
+        if unit == 6 and num == 1:
+            return "7d"
+        return f"token-{unit}-{num}"
+    if typ == "TIME_LIMIT":
+        return "tools"
+    return "?"
+
+
 def _fetch_zai_quota_uncached(token: str) -> dict:
     data = _api_get(QUOTA_URL, token)
 
@@ -71,18 +86,14 @@ def _fetch_zai_quota_uncached(token: str) -> dict:
 
     limits = data.get("data", {}).get("limits", [])
 
-    token_limit = None
-    time_limit = None
+    windows: dict[str, dict] = {}
 
     for item in limits:
-        if item.get("type") == "TOKENS_LIMIT":
-            token_limit = item
-        elif item.get("type") == "TIME_LIMIT":
-            time_limit = item
+        label = _unit_label(item)
+        windows[label] = item
 
     return {
-        "token_limit": token_limit,
-        "time_limit": time_limit,
+        "windows": windows,
         "level": data.get("data", {}).get("level"),
     }
 
@@ -116,22 +127,29 @@ def _format_ms_reset(ms: int | None) -> str:
 
 
 def print_cli(quota: dict) -> None:
-    tl = quota.get("token_limit")
-    ml = quota.get("time_limit")
+    w = quota.get("windows", {})
+    tl5h = w.get("5h")
+    tl7d = w.get("7d")
+    ml = w.get("tools")
 
     print(f"Z.ai Usage (level: {quota.get('level', '?')})")
     print("-" * 50)
 
-    if tl:
-        pct = tl.get("percentage", 0)
-        reset = _format_ms_reset(tl.get("nextResetTime"))
+    if tl5h:
+        pct = tl5h.get("percentage", 0)
+        reset = _format_ms_reset(tl5h.get("nextResetTime"))
         print(f"5h Tokens : {pct}%  (Reset in {reset})")
+
+    if tl7d:
+        pct = tl7d.get("percentage", 0)
+        reset = _format_ms_reset(tl7d.get("nextResetTime"))
+        print(f"Weekly Tokens: {pct}%  (Reset in {reset})")
 
     if ml:
         pct = ml.get("percentage", 0)
         remaining = ml.get("remaining", 0)
         reset = _format_ms_reset(ml.get("nextResetTime"))
-        print(f"Monthly Tools: {pct}% ({remaining} remaining)")
+        print(f"Monthly Tools: {pct}% ({remaining} remaining, Reset in {reset})")
         for d in ml.get("usageDetails", []):
             code = d.get("modelCode", "?")
             usage = d.get("usage", 0)
@@ -143,18 +161,35 @@ def print_json(
     format_str: str | None = None,
     tooltip_format: str | None = None,
 ) -> None:
-    tl = quota.get("token_limit")
-    ml = quota.get("time_limit")
+    w = quota.get("windows", {})
+    tl5h = w.get("5h")
+    tl7d = w.get("7d")
+    ml = w.get("tools")
 
-    pct = tl.get("percentage", 0) if tl else 0
-    reset_str = _format_ms_reset(tl.get("nextResetTime")) if tl else "??"
+    fh_pct = tl5h.get("percentage", 0) if tl5h else 0
+    sd_pct = tl7d.get("percentage", 0) if tl7d else 0
+    fh_reset_str = _format_ms_reset(tl5h.get("nextResetTime")) if tl5h else "??"
+    sd_reset_str = _format_ms_reset(tl7d.get("nextResetTime")) if tl7d else "??"
 
-    is_ready = pct == 0 and tl is not None
-    is_exhausted = pct >= 100
+    has_5h = tl5h is not None
+    has_7d = tl7d is not None
 
-    if is_exhausted:
+    # Active window: 7d if critical/high, else 5h
+    if has_7d and sd_pct >= 100:
+        target_pct, target_reset = sd_pct, sd_reset_str
+    elif has_7d and sd_pct > 80:
+        target_pct, target_reset = sd_pct, sd_reset_str
+    elif has_5h:
+        target_pct, target_reset = fh_pct, fh_reset_str
+    else:
+        target_pct, target_reset = 0, "??"
+
+    # Status determination
+    all_zero = (not has_5h or fh_pct == 0) and (not has_7d or sd_pct == 0)
+    any_exhausted = (has_7d and sd_pct >= 100) or (has_5h and fh_pct >= 100)
+    if any_exhausted:
         status = "Pause"
-    elif is_ready:
+    elif all_zero:
         status = "Ready"
     else:
         status = ""
@@ -167,9 +202,13 @@ def print_json(
         "icon_plain": ZAI_ICON,
         "time_icon": time_icon_styled,
         "time_icon_plain": "\U000f051a",
-        "pct": pct,
-        "reset": reset_str,
+        "pct": target_pct,
+        "reset": target_reset,
         "status": status,
+        "5h_pct": fh_pct,
+        "5h_reset": fh_reset_str,
+        "7d_pct": sd_pct,
+        "7d_reset": sd_reset_str,
     }
 
     if ml:
@@ -188,7 +227,7 @@ def print_json(
         elif status == "Ready":
             text = f"{icon_styled} Ready"
         else:
-            text = f"{icon_styled} {pct}% {time_icon_styled} {reset_str}"
+            text = f"{icon_styled} {target_pct}% {time_icon_styled} {target_reset}"
 
     if tooltip_format:
         tooltip = format_output(tooltip_format, data)
@@ -197,8 +236,10 @@ def print_json(
             "Window     Used    Reset",
             "\u2501" * 24,
         ]
-        if tl:
-            lines.append(f"Tokens     {pct:>3}%    {reset_str}")
+        if tl5h:
+            lines.append(f"5-Hour     {fh_pct:>3}%    {fh_reset_str}")
+        if tl7d:
+            lines.append(f"Weekly     {sd_pct:>3}%    {sd_reset_str}")
         if ml:
             ml_pct = ml.get("percentage", 0)
             ml_reset = _format_ms_reset(ml.get("nextResetTime"))
@@ -211,9 +252,9 @@ def print_json(
         lines.append("Click to Refresh")
         tooltip = "\n".join(lines)
 
-    if pct < 50:
+    if target_pct < 50:
         cls = "zai-low"
-    elif pct < 80:
+    elif target_pct < 80:
         cls = "zai-mid"
     else:
         cls = "zai-high"
@@ -222,7 +263,7 @@ def print_json(
         "text": text,
         "tooltip": tooltip,
         "class": cls,
-        "percentage": pct,
+        "percentage": target_pct,
     }
     print(json.dumps(output))
 
@@ -244,8 +285,9 @@ def main() -> None:
         type=str,
         help=(
             "Custom format string for output text. Available: {icon}, {icon_plain}, "
-            "{pct}, {reset}, {status}, {tools_pct}, {tools_remaining}, {tools_reset}. "
-            "Example: '{icon_plain} {pct}%%'"
+            "{pct}, {reset}, {status}, {tools_pct}, {tools_remaining}, {tools_reset}, "
+            "{5h_pct}, {5h_reset}, {7d_pct}, {7d_reset}. "
+            "Example: '{icon_plain} {7d_pct}%%'"
         ),
     )
     parser.add_argument(
