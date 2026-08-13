@@ -23,11 +23,42 @@ DEFAULT_QUOTA = 300
 GITHUB_API_BASE = "https://api.github.com"
 COPILOT_FEATURES_URL = "https://github.com/settings/copilot/features"
 
+# Local Copilot editor/CLI credentials (written by the official Copilot plugins).
+COPILOT_CONFIG_DIR = Path("~/.config/github-copilot").expanduser()
+COPILOT_APPS_JSON = COPILOT_CONFIG_DIR / "apps.json"
+COPILOT_OAUTH_JSON = COPILOT_CONFIG_DIR / "oauth.json"
+COPILOT_INTERNAL_URL = f"{GITHUB_API_BASE}/copilot_internal/user"
+
+# Order in which quota snapshots / usage rows are preferred when the account
+# exposes more than one metric.
+QUOTA_SNAPSHOT_PRIORITY = ("premium_interactions", "premium_requests", "chat", "completions")
+USAGE_LABEL_PRIORITY = (
+    "premium requests",
+    "premium interactions",
+    "included credits",
+    "monthly limit",
+    "inline suggestions",
+)
+
+VALID_SOURCES = ("auto", "api", "internal", "browser")
+
 
 def load_copilot_config(config_path: Path | None = None) -> dict:
-    """Load Copilot config from file. Returns dict with GITHUB_TOKEN and COPILOT_QUOTA."""
+    """Load Copilot config from file.
+
+    Recognized keys:
+    - GITHUB_TOKEN:   fine-grained PAT with 'Plan (read)' (personal paid accounts)
+    - COPILOT_QUOTA:  fallback quota used when the source doesn't report one
+    - COPILOT_SOURCE: auto | api | internal | browser
+    - COPILOT_METRIC: label/quota id to prefer (e.g. 'premium_interactions')
+    """
     path = config_path or CONFIG_PATH
-    config: dict = {"GITHUB_TOKEN": None, "COPILOT_QUOTA": DEFAULT_QUOTA}
+    config: dict = {
+        "GITHUB_TOKEN": None,
+        "COPILOT_QUOTA": DEFAULT_QUOTA,
+        "COPILOT_SOURCE": "auto",
+        "COPILOT_METRIC": None,
+    }
 
     if not path.exists():
         return config
@@ -47,6 +78,12 @@ def load_copilot_config(config_path: Path | None = None) -> dict:
                     config["COPILOT_QUOTA"] = int(value)
                 except ValueError:
                     pass
+            elif key == "COPILOT_SOURCE":
+                value = value.lower()
+                if value in VALID_SOURCES:
+                    config["COPILOT_SOURCE"] = value
+            elif key == "COPILOT_METRIC":
+                config["COPILOT_METRIC"] = value or None
 
     return config
 
@@ -107,7 +144,123 @@ def _fetch_copilot_usage_uncached(token: str) -> dict:
         usage_items = usage_data.get("usageItems", [])
 
     used = sum(item.get("grossQuantity", 0) for item in usage_items)
-    return {"used": round(used, 1), "raw": usage_data}
+    return {"used": round(used, 1), "raw": usage_data, "source": "billing-api"}
+
+
+# ==================== Source: local Copilot OAuth token ====================
+
+class CopilotNoLocalToken(RuntimeError):
+    """Raised when no local Copilot editor/CLI OAuth token could be found."""
+
+
+def _load_copilot_oauth_token() -> str:
+    """Read the OAuth token stored by the official Copilot editor/CLI plugins.
+
+    Both ~/.config/github-copilot/apps.json and the older oauth.json map a host key
+    (e.g. "github.com:Ov23li..." or "github.com") to an object containing
+    ``oauth_token``. Any github.com entry works for the copilot_internal endpoint.
+    """
+    for path in (COPILOT_APPS_JSON, COPILOT_OAUTH_JSON):
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        for key, entry in data.items():
+            if not str(key).startswith("github.com"):
+                continue
+            token = entry.get("oauth_token") if isinstance(entry, dict) else None
+            if token:
+                return token
+
+    raise CopilotNoLocalToken(
+        f"No Copilot OAuth token found in {COPILOT_APPS_JSON} or {COPILOT_OAUTH_JSON}. "
+        "Sign in to Copilot from an editor or the Copilot CLI."
+    )
+
+
+def _pick_quota_snapshot(snapshots: dict, preferred: str | None) -> tuple[str, dict] | None:
+    """Choose the most relevant quota snapshot from copilot_internal/user."""
+    if not isinstance(snapshots, dict):
+        return None
+
+    def usable(snap: object) -> bool:
+        return isinstance(snap, dict) and snap.get("has_quota") and not snap.get("unlimited")
+
+    if preferred and usable(snapshots.get(preferred)):
+        return preferred, snapshots[preferred]
+
+    for name in QUOTA_SNAPSHOT_PRIORITY:
+        if usable(snapshots.get(name)):
+            return name, snapshots[name]
+
+    for name, snap in snapshots.items():
+        if usable(snap):
+            return name, snap
+
+    return None
+
+
+def _fetch_copilot_usage_from_internal(metric: str | None = None) -> dict:
+    """Fetch usage from api.github.com/copilot_internal/user using the local token.
+
+    This is the endpoint the official editor plugins use, so it works for
+    enterprise/EMU (Copilot Business) seats where the public billing API returns 400.
+    """
+    token = _load_copilot_oauth_token()
+    req = urllib.request.Request(
+        COPILOT_INTERNAL_URL,
+        headers={
+            "Authorization": f"token {token}",
+            "Accept": "application/json",
+            "Editor-Version": "vscode/1.99.0",
+            "Editor-Plugin-Version": "copilot-chat/0.26.7",
+            "User-Agent": "GitHubCopilotChat/0.26.7",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        raise CopilotHTTPError(e.code, e.read().decode()) from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Network error: {e.reason}") from e
+
+    picked = _pick_quota_snapshot(data.get("quota_snapshots", {}), metric)
+    if picked is None:
+        raise RuntimeError("copilot_internal returned no metered quota snapshot")
+
+    quota_id, snap = picked
+    entitlement = float(snap.get("entitlement") or 0)
+    remaining = snap.get("remaining")
+    if remaining is None:
+        remaining = snap.get("quota_remaining")
+
+    if entitlement > 0 and remaining is not None:
+        used = max(entitlement - float(remaining), 0.0)
+        pct = used / entitlement * 100
+    else:
+        pct = 100.0 - float(snap.get("percent_remaining") or 0)
+        used = round(entitlement * pct / 100, 1) if entitlement > 0 else float(
+            snap.get("credits_used") or 0
+        )
+
+    overage = float(snap.get("overage_count") or 0)
+
+    return {
+        "pct": round(pct, 2),
+        "used": round(used + overage, 1),
+        "quota": int(entitlement) if entitlement > 0 else None,
+        "reset": data.get("quota_reset_date_utc") or data.get("quota_reset_date"),
+        "plan": data.get("copilot_plan"),
+        "login": data.get("login"),
+        "quota_id": quota_id,
+        "overage": overage,
+        "source": "copilot-internal",
+    }
 
 
 def _iter_chromium_profile_cookies(domain: str):
@@ -141,12 +294,55 @@ def _iter_chromium_profile_cookies(domain: str):
                 yield cookies, f"{browser_name}:{entry}"
 
 
-def _parse_copilot_features_page(html: str):
+def _parse_usage_rows(html: str) -> dict[str, float]:
+    """Extract {row label: percent used} from the Copilot settings 'Usage' box.
+
+    Current (2026) markup, one <li class="Box-row"> per metric:
+        <span ... class="text-bold">Included credits</span>
+        ... <span class="mr-2 ...">12% used</span>
+        <span style="width: 12.5%;" ... class="Progress-item ..."></span>
+    """
+    rows: dict[str, float] = {}
+    for row in re.findall(r'<li[^>]*class="[^"]*Box-row[^"]*"[^>]*>.*?</li>', html, re.S):
+        label_match = re.search(r'class="[^"]*text-bold[^"]*"[^>]*>\s*([^<]+?)\s*<', row)
+        if not label_match:
+            continue
+        # Prefer the precise progress-bar width; fall back to the rounded "N% used" text.
+        width_match = re.search(r'width:\s*([\d.]+)%[^>]*Progress-item', row)
+        used_match = re.search(r'(\d+(?:\.\d+)?)%\s*used', row)
+        if width_match:
+            pct = float(width_match.group(1))
+        elif used_match:
+            pct = float(used_match.group(1))
+        else:
+            continue
+        rows[label_match.group(1).strip().lower()] = pct
+    return rows
+
+
+def _pick_usage_row(rows: dict[str, float], preferred: str | None) -> float | None:
+    """Choose which usage row represents the quota we want to display."""
+    if not rows:
+        return None
+    if preferred:
+        wanted = preferred.strip().lower().replace("_", " ")
+        for label, pct in rows.items():
+            if wanted in label:
+                return pct
+    for wanted in USAGE_LABEL_PRIORITY:
+        for label, pct in rows.items():
+            if wanted in label:
+                return pct
+    return next(iter(rows.values()))
+
+
+def _parse_copilot_features_page(html: str, metric: str | None = None):
     """Return (pct, managed_by_name, managed_by_href) if the page renders usage, else None.
 
-    Supports two layouts of https://github.com/settings/copilot/features:
-    - 2026 usage-based billing: a "Monthly Limit" section with a progress bar,
-      where AI credit usage is shown as a percentage of the monthly limit.
+    Supports three layouts of https://github.com/settings/copilot/features:
+    - 2026 'Usage' box with one Box-row per metric ("Included credits",
+      "Premium requests", "Inline suggestions").
+    - 2025 usage-based billing: a "Monthly Limit" section with a progress bar.
     - Legacy: the "copilot-overages-usage" premium-request section.
     """
     managed_by = re.search(
@@ -156,11 +352,17 @@ def _parse_copilot_features_page(html: str):
     managed_name = managed_by.group(2) if managed_by else None
     managed_href = managed_by.group(1) if managed_by else None
 
-    # New layout (usage-based billing): "Monthly Limit" usage section.
+    # Current layout: the "Usage" box with labelled rows.
+    usage_idx = html.find(">Usage<")
+    if usage_idx != -1:
+        pct = _pick_usage_row(_parse_usage_rows(html[usage_idx:usage_idx + 20000]), metric)
+        if pct is not None:
+            return (pct, managed_name, managed_href)
+
+    # 2025 layout (usage-based billing): "Monthly Limit" usage section.
     idx = html.find("Monthly Limit")
     if idx != -1:
         section = html[idx:idx + 3000]
-        # Prefer the precise progress-bar width; fall back to the rounded "N% used" text.
         width_match = re.search(r'width:\s*([\d.]+)%[^>]*Progress-item', section)
         used_match = re.search(r'(\d+(?:\.\d+)?)%\s*used', section)
         if width_match:
@@ -179,7 +381,7 @@ def _parse_copilot_features_page(html: str):
     return None
 
 
-def _fetch_copilot_usage_from_browser() -> dict:
+def _fetch_copilot_usage_from_browser(metric: str | None = None) -> dict:
     """Fetch Copilot usage percentage from the authenticated Copilot settings page.
 
     Iterates through every Chrome/Chromium/Brave profile until one returns a page
@@ -207,7 +409,7 @@ def _fetch_copilot_usage_from_browser() -> dict:
             last_error = f"{label}: HTTP {response.status_code}"
             continue
 
-        parsed = _parse_copilot_features_page(response.text)
+        parsed = _parse_copilot_features_page(response.text, metric)
         if parsed is None:
             last_error = f"{label}: no copilot usage section"
             continue
@@ -233,7 +435,7 @@ def _fetch_copilot_usage_from_browser() -> dict:
     )
     if response.status_code != 200:
         raise RuntimeError(f"{browser_name}: HTTP {response.status_code}")
-    parsed = _parse_copilot_features_page(response.text)
+    parsed = _parse_copilot_features_page(response.text, metric)
     if parsed is None:
         raise RuntimeError(
             f"No copilot usage section in any profile. Tried: {tried + [browser_name]}"
@@ -246,25 +448,63 @@ def _fetch_copilot_usage_from_browser() -> dict:
     }
 
 
-def _should_fallback_to_browser(error: Exception) -> bool:
+def _should_fallback(error: Exception) -> bool:
     """Only fall back for user billing API responses that are expected for org-managed Copilot."""
-    return isinstance(error, CopilotHTTPError) and error.code in (400, 403, 404)
+    return isinstance(error, CopilotHTTPError) and error.code in (400, 401, 403, 404)
 
 
-def get_copilot_usage(token: str | None) -> dict:
-    """Fetch Copilot usage with file-based caching (TTL: 60 seconds)."""
-    def fetch_browser() -> dict:
-        return get_cached_or_fetch("copilot_browser", _fetch_copilot_usage_from_browser)
+def get_copilot_usage(token: str | None, source: str = "auto", metric: str | None = None) -> dict:
+    """Fetch Copilot usage with file-based caching (TTL: 60 seconds).
 
-    if not token:
-        return fetch_browser()
+    Sources are tried in order (``auto``):
+    1. ``api``      - public billing API with a PAT (personal paid accounts)
+    2. ``internal`` - api.github.com/copilot_internal/user with the local Copilot
+                      editor/CLI OAuth token (works for enterprise/EMU seats)
+    3. ``browser``  - scrape /settings/copilot/features using browser cookies
+    """
+    def from_api() -> dict:
+        if not token:
+            raise RuntimeError(f"No GITHUB_TOKEN configured in {CONFIG_PATH}")
+        return get_cached_or_fetch("copilot", lambda: _fetch_copilot_usage_uncached(token))
+
+    def from_internal() -> dict:
+        return get_cached_or_fetch(
+            "copilot_internal", lambda: _fetch_copilot_usage_from_internal(metric)
+        )
+
+    def from_browser() -> dict:
+        return get_cached_or_fetch(
+            "copilot_browser_v2", lambda: _fetch_copilot_usage_from_browser(metric)
+        )
+
+    if source == "api":
+        return from_api()
+    if source == "internal":
+        return from_internal()
+    if source == "browser":
+        return from_browser()
+
+    errors: list[str] = []
+
+    if token:
+        try:
+            return from_api()
+        except Exception as exc:
+            if not _should_fallback(exc):
+                raise
+            errors.append(f"billing api: {exc}")
 
     try:
-        return get_cached_or_fetch("copilot", lambda: _fetch_copilot_usage_uncached(token))
+        return from_internal()
     except Exception as exc:
-        if not _should_fallback_to_browser(exc):
-            raise
-        return fetch_browser()
+        errors.append(f"copilot_internal: {exc}")
+
+    try:
+        return from_browser()
+    except Exception as exc:
+        errors.append(f"browser: {exc}")
+
+    raise RuntimeError("All Copilot usage sources failed -> " + " | ".join(errors))
 
 
 # ==================== Output: CLI / Waybar ====================
@@ -279,24 +519,27 @@ def _next_month_reset_iso() -> str:
     return reset.isoformat()
 
 
-def print_cli(used: float, quota: int, pct: float | None = None) -> None:
+def print_cli(used: float, quota: int, pct: float | None = None, reset_iso: str | None = None) -> None:
     """Print usage to terminal (for debugging).
 
     When ``pct`` is given, usage is a percentage of the monthly limit (AI credits,
     usage-based billing) and the request-count line is omitted. Otherwise the legacy
     premium-request count is shown.
     """
-    reset_str = format_eta(_next_month_reset_iso())
+    reset_iso = reset_iso or _next_month_reset_iso()
+    reset_str = format_eta(reset_iso)
     if pct is not None:
         print(f"GitHub Copilot — Monthly Limit")
         print("-" * 40)
         print(f"Used : {round(pct, 2):g}% of monthly limit")
+        if quota > 0:
+            print(f"Count: {used:g} / {quota}")
     else:
         pct = round(used / quota * 100) if quota > 0 else 0
         print(f"GitHub Copilot Premium Requests")
         print("-" * 40)
         print(f"Used : {used} / {quota} ({pct}%)")
-    print(f"Reset: {reset_str} (next month, 1st at 00:00 UTC)")
+    print(f"Reset: {reset_str} ({reset_iso[:10]})")
 
 
 def print_json(
@@ -305,6 +548,7 @@ def print_json(
     format_str: str | None = None,
     tooltip_format: str | None = None,
     pct: float | None = None,
+    reset_iso: str | None = None,
 ) -> None:
     """Print Waybar JSON output.
 
@@ -317,7 +561,7 @@ def print_json(
         pct = min(round(float(pct)), 100)
     else:
         pct = min(round(used / quota * 100) if quota > 0 else 0, 100)
-    reset_iso = _next_month_reset_iso()
+    reset_iso = reset_iso or _next_month_reset_iso()
     reset_str = format_eta(reset_iso)
 
     icon_styled = f"<span foreground='{COPILOT_COLOR}' size='large'>{COPILOT_ICON} </span>"
@@ -345,11 +589,13 @@ def print_json(
     if tooltip_format:
         tooltip = format_output(tooltip_format, data)
     elif percent_only:
+        count_line = f"Count:  {used_str} / {quota}\n" if quota > 0 else ""
         tooltip = (
             f"GitHub Copilot — Monthly Limit\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"Used:   {pct}% of monthly limit\n"
-            f"Reset:  {reset_str} (next month)\n"
+            f"{count_line}"
+            f"Reset:  {reset_str} ({reset_iso[:10]})\n"
             f"\nClick to Refresh"
         )
     else:
@@ -407,19 +653,35 @@ def main() -> None:
         default=CONFIG_PATH,
         help=f"Path to copilot config file (default: {CONFIG_PATH})",
     )
+    parser.add_argument(
+        "--source",
+        choices=VALID_SOURCES,
+        help="Force a usage source (default: COPILOT_SOURCE from config, or 'auto')",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print the raw usage payload to stderr",
+    )
     args = parser.parse_args()
 
     config = load_copilot_config(args.config)
     token = config["GITHUB_TOKEN"]
     quota = config["COPILOT_QUOTA"]
+    source = args.source or config["COPILOT_SOURCE"]
+    metric = config["COPILOT_METRIC"]
 
     try:
-        usage = get_copilot_usage(token)
+        usage = get_copilot_usage(token, source=source, metric=metric)
+        if args.debug:
+            print(json.dumps(usage, indent=2), file=sys.stderr)
         used = usage.get("used", 0)
         pct = usage.get("pct")
-        if pct is not None:
-            # Percentage of the monthly limit (AI credits): derive a count only so
-            # that the {used} format placeholder keeps working.
+        reset_iso = usage.get("reset")
+        if usage.get("quota"):
+            quota = int(usage["quota"])
+        if pct is not None and not usage.get("used"):
+            # Percentage-only source: derive a count so {used} keeps working.
             used = round(quota * float(pct) / 100, 1)
     except Exception as e:
         if args.json:
@@ -432,31 +694,36 @@ def main() -> None:
                     "404",
                     "Failed to read cookies for github.com",
                     "no copilot usage section",
+                    "No Copilot OAuth token found",
                 )
             )
             short_err = "Auth Err" if is_auth else "Net Err"
             tooltip = f"Error fetching Copilot usage:\n{err_msg}"
+            if "No Copilot OAuth token found" in err_msg:
+                tooltip += (
+                    f"\n\nNo local Copilot credentials in {COPILOT_CONFIG_DIR}."
+                    "\nSign in to Copilot from an editor (VS Code, JetBrains)"
+                    "\nor run 'copilot' (Copilot CLI) and authenticate."
+                )
             if not token:
                 tooltip += (
                     f"\n\nNo GITHUB_TOKEN found in {args.config}."
                     "\nFor personal Copilot, create a fine-grained PAT with"
                     "\n'Plan (read)' permission."
-                    "\nFor organization-managed Copilot, log into GitHub in any browser"
-                    "\nand make sure usage is visible on"
-                    "\nhttps://github.com/settings/copilot/features"
+                    "\nFor organization-managed Copilot, the local Copilot token"
+                    "\nor a browser session is used instead."
                 )
-            if "Failed to read cookies for github.com" in err_msg or "no copilot usage section" in err_msg:
+            if "no copilot usage section" in err_msg or "No copilot usage section" in err_msg:
                 tooltip += (
-                    "\n\nFor organization-managed Copilot, make sure you're logged into"
-                    "\nGitHub in a browser (Chrome, Chromium, Brave, Firefox, etc.)"
-                    "\nand can see usage on"
-                    "\nhttps://github.com/settings/copilot/features"
+                    "\n\nGitHub may have changed the layout of"
+                    f"\n{COPILOT_FEATURES_URL}"
+                    "\nPrefer COPILOT_SOURCE=internal in the config file."
                 )
-                if token:
-                    tooltip += (
-                        "\n\nFor personal Copilot, verify your fine-grained PAT has"
-                        "\nUser permissions -> Plan -> Read-only."
-                    )
+            if "Failed to read cookies for github.com" in err_msg:
+                tooltip += (
+                    "\n\nNo browser session found. Log into GitHub in Chrome,"
+                    "\nChromium, Brave or Firefox, or sign in to Copilot in an editor."
+                )
             print(json.dumps({
                 "text": f"<span foreground='#ff5555'>{COPILOT_ICON} {short_err}</span>",
                 "tooltip": tooltip,
@@ -465,17 +732,16 @@ def main() -> None:
             sys.exit(0)
         else:
             if not token:
-                print(f"[!] Error: No GITHUB_TOKEN in {args.config}", file=sys.stderr)
-                print("    For personal Copilot, create a fine-grained PAT with 'Plan (read)' permission.", file=sys.stderr)
-                print("    For organization-managed Copilot, log into GitHub in any browser and check:", file=sys.stderr)
-                print(f"    {COPILOT_FEATURES_URL}", file=sys.stderr)
+                print(f"[!] Note: No GITHUB_TOKEN in {args.config}", file=sys.stderr)
+                print("    For personal paid Copilot, create a fine-grained PAT with 'Plan (read)'.", file=sys.stderr)
+                print(f"    For enterprise/EMU seats, sign in to Copilot in an editor ({COPILOT_CONFIG_DIR}).", file=sys.stderr)
             print(f"[!] Critical Error: {e}", file=sys.stderr)
             sys.exit(1)
 
     if args.json:
-        print_json(used, quota, args.format, args.tooltip_format, pct=pct)
+        print_json(used, quota, args.format, args.tooltip_format, pct=pct, reset_iso=reset_iso)
     else:
-        print_cli(used, quota, pct=pct)
+        print_cli(used, quota, pct=pct, reset_iso=reset_iso)
 
 
 if __name__ == "__main__":

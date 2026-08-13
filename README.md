@@ -28,11 +28,29 @@ Per-provider setup lives inside the widget config:
 |---|---|
 | Claude | Browser cookie (claude.ai) |
 | Codex (ChatGPT) | Browser cookie (chatgpt.com) |
-| Copilot | Browser cookie (github.com) — also accepts a PAT in `~/.config/plasma-ai-usage-panel/copilot.conf` for personal plans |
+| Copilot | Local Copilot token (`~/.config/github-copilot/apps.json`, works for Business/Enterprise/EMU seats) — also accepts a PAT in `~/.config/plasma-ai-usage-panel/copilot.conf` for personal paid plans, or a browser cookie (github.com) as fallback |
 | OpenCode Zen | Browser cookie (opencode.ai) |
 | Z.ai (GLM) | API key from [z.ai/manage-apikey/apikey-list](https://z.ai/manage-apikey/apikey-list) — paste it in the widget config |
 
 Supported browsers: Chrome, Chromium, Brave, Edge, Firefox, Helium.
+
+### Copilot options (`~/.config/plasma-ai-usage-panel/copilot.conf`)
+
+```ini
+# Optional: fine-grained PAT with 'Plan (read)' — personal paid plans only
+GITHUB_TOKEN=github_pat_...
+# Fallback quota when the source doesn't report one
+COPILOT_QUOTA=300
+# auto (default) | api | internal | browser
+COPILOT_SOURCE=auto
+# Quota to display: premium_interactions, included credits, inline suggestions, ...
+COPILOT_METRIC=premium_interactions
+```
+
+`auto` tries the billing API (PAT), then `api.github.com/copilot_internal/user` with the
+token the official Copilot editor/CLI plugins store in `~/.config/github-copilot`, then
+scrapes `https://github.com/settings/copilot/features` with browser cookies.
+Use `copilot-usage --source internal --debug` to inspect the raw payload.
 
 ## Install
 
