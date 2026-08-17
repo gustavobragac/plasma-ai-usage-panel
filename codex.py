@@ -101,42 +101,47 @@ def print_json(
     show_5h: bool = False,
 ) -> None:
     rate = usage.get("rate_limit") or {}
-    p_win = parse_window_direct(rate.get("primary_window"))
-    s_win = parse_window_direct(rate.get("secondary_window"))
-
-    # Get raw window data to check for unused state
     p_raw = rate.get("primary_window") or {}
     s_raw = rate.get("secondary_window") or {}
+    windows = [
+        (raw, parse_window_direct(raw))
+        for raw in (p_raw, s_raw)
+        if raw
+    ]
+
+    def window_with_duration(seconds: int):
+        return next(
+            ((raw, win) for raw, win in windows if raw.get("limit_window_seconds") == seconds),
+            ({}, parse_window_direct(None)),
+        )
+
+    fh_raw, fh_win = window_with_duration(5 * 60 * 60)
+    weekly_raw, weekly_win = window_with_duration(7 * 24 * 60 * 60)
 
     # Prepare all data points without icons
-    p_reset_str = format_eta(p_win.resets_at) if p_win.resets_at else "Not started"
-    s_reset_str = format_eta(s_win.resets_at) if s_win.resets_at else "Not started"
+    fh_reset_str = format_eta(fh_win.resets_at) if fh_win.resets_at else "Not started"
+    weekly_reset_str = format_eta(weekly_win.resets_at) if weekly_win.resets_at else "Not started"
 
     # Icons with colors (users can customize)
     icon_styled = "<span foreground='#74AA9C' size='large'>󰬫</span>"
     time_icon_styled = "<span foreground='#74AA9C' size='large'>󰔚</span>"
 
-    # Determine active window based on show_5h flag or default logic
-    if show_5h:
-        # Always show primary (5-hour) window
-        target_win = p_win
-        target_raw = p_raw
-        win_type = "Primary"
-    elif s_win.utilization >= 100:
-        # Secondary window exhausted
-        target_win = s_win
-        target_raw = s_raw
-        win_type = "Secondary"
-    elif s_win.utilization > 80:
-        # Secondary window high usage
-        target_win = s_win
-        target_raw = s_raw
-        win_type = "Secondary"
+    # The API's primary/secondary positions do not identify the window length.
+    # ChatGPT plans may expose only a weekly primary window.
+    if show_5h and fh_raw:
+        target_raw, target_win, win_type = fh_raw, fh_win, "5h"
+    elif weekly_raw and weekly_win.utilization > 80:
+        target_raw, target_win, win_type = weekly_raw, weekly_win, "7d"
+    elif fh_raw:
+        target_raw, target_win, win_type = fh_raw, fh_win, "5h"
+    elif weekly_raw:
+        target_raw, target_win, win_type = weekly_raw, weekly_win, "7d"
+    elif windows:
+        target_raw, target_win = windows[0]
+        win_type = "Custom"
     else:
-        # Default to Primary window
-        target_win = p_win
-        target_raw = p_raw
-        win_type = "Primary"
+        target_raw, target_win = {}, parse_window_direct(None)
+        win_type = "None"
 
     pct = int(round(target_win.utilization))
 
@@ -150,7 +155,7 @@ def print_json(
     window_not_started = (target_win.utilization == 0 and target_win.resets_at is None)
 
     # Determine status
-    if s_win.utilization >= 100:
+    if weekly_win.utilization >= 100:
         status = "Pause"
     elif is_unused or window_not_started:
         status = "Ready"
@@ -159,10 +164,10 @@ def print_json(
 
     # Prepare data dictionary for formatting
     data = {
-        "5h_pct": int(round(p_win.utilization)),
-        "7d_pct": int(round(s_win.utilization)),
-        "5h_reset": p_reset_str,
-        "7d_reset": s_reset_str,
+        "5h_pct": int(round(fh_win.utilization)),
+        "7d_pct": int(round(weekly_win.utilization)),
+        "5h_reset": fh_reset_str,
+        "7d_reset": weekly_reset_str,
         "icon": icon_styled,
         "icon_plain": "󰬫",
         "time_icon": time_icon_styled,
@@ -190,14 +195,13 @@ def print_json(
         tooltip = format_output(tooltip_format, data)
     else:
         # Default tooltip
-        tooltip = (
-            "Window     Used    Reset\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"5-Hour     {p_win.utilization:>3.0f}%    {p_reset_str}\n"
-            f"7-Day      {s_win.utilization:>3.0f}%    {s_reset_str}\n"
-            "\n"
-            "Click to Refresh"
-        )
+        lines = ["Window     Used    Reset", "━━━━━━━━━━━━━━━━━━━━━━━━"]
+        if fh_raw:
+            lines.append(f"5-Hour     {fh_win.utilization:>3.0f}%    {fh_reset_str}")
+        if weekly_raw:
+            lines.append(f"Weekly     {weekly_win.utilization:>3.0f}%    {weekly_reset_str}")
+        lines.extend(["", "Click to Refresh"])
+        tooltip = "\n".join(lines)
 
     if pct < 50:
         cls = "codex-low"
@@ -220,12 +224,20 @@ def print_json(
 def print_cli(usage: dict) -> None:
     print(json.dumps(usage, indent=2))
     rate = usage.get("rate_limit") or {}
-    p = parse_window_direct(rate.get("primary_window"))
-    s = parse_window_direct(rate.get("secondary_window"))
 
     print("-" * 40)
-    print(f"Primary   (Short): {p.utilization:>5.1f}% | Reset in {format_eta(p.resets_at)}")
-    print(f"Secondary (Long) : {s.utilization:>5.1f}% | Reset in {format_eta(s.resets_at)}")
+    for raw in (rate.get("primary_window"), rate.get("secondary_window")):
+        if not raw:
+            continue
+        win = parse_window_direct(raw)
+        seconds = raw.get("limit_window_seconds")
+        if seconds == 5 * 60 * 60:
+            label = "5-Hour"
+        elif seconds == 7 * 24 * 60 * 60:
+            label = "Weekly"
+        else:
+            label = "Custom"
+        print(f"{label:<8}: {win.utilization:>5.1f}% | Reset in {format_eta(win.resets_at)}")
 
 
 def main() -> None:
